@@ -15,7 +15,7 @@ parser = argparse.ArgumentParser(description='')
 parser.add_argument('--data_dir', default='rawdata', type=str)
 parser.add_argument('--sample_rate', default=1000, type=int)
 parser.add_argument('--device', default='Dev2', type=str)
-parser.add_argument('--channels', default=[2, 5, 4], type=int, nargs='+')
+parser.add_argument('--channels', default=4, type=int, nargs='+')
 
 args = parser.parse_args()
 

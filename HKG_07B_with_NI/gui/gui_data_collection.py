@@ -1,12 +1,14 @@
 import os
 from os.path import join as fullfile
+import numpy as np
 import time
 from datetime import datetime
 from array import array
 from threading import Thread
 
-from PySide6.QtCore import QCoreApplication
-from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QComboBox, QPushButton, QMessageBox, QSizePolicy
+from PySide6.QtGui import QFont
+from PySide6.QtCore import QCoreApplication, Qt
+from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QComboBox, QPushButton, QMessageBox, QSizePolicy, QGridLayout, QLabel
 from pglive.sources.data_connector import DataConnector
 from pglive.sources.live_plot import LiveLinePlot
 from pglive.sources.live_plot_widget import LivePlotWidget
@@ -16,28 +18,30 @@ from nidaqmx.constants import TerminalConfiguration
 
 from widgets.form_label import FormLabel
 
-from util.iir_filter import IIRFilter
-from util.movavg import MovingAverageFilter
-
 
 TITLE = "Data Collection (%s - %s)"
-PLOT_SECONDS = 2
-EXPERIMENTS = ['Exp-Test', 'Exp1-1/Lying', 'Exp2-1/Lying_Walking', 'Exp2-2/Lying_FaceLeft', 'Exp2-2/Lying_FaceRight', 'Exp2-2/Lying_FaceDown', 'Exp2-3/Lying_Exercise', 'Exp1-1/Sitting', 'Exp2-1/Sitting_Walking', 'Exp2-3/Sitting_Exercise']
-
+PLOT_SECONDS = 20
+CONVERT_TO_BPM = 60
+EXPERIMENTS = ['Heartbeat_Visualization', 'PPG_Collection']
 
 class DataCollectionWindow(QMainWindow):
     def __init__(self, subject, args):
         super().__init__()
 
         self.subject = subject
-        self.args = args
+        self.args    = args
 
-        self.is_collecting = False
-        self.daq_running = 0
-        self.f = None
-
-        self.bcg_filter = IIRFilter(4, [0.5, 20], fs=self.args.sample_rate, btype='bandpass')
-        self.ecg_filter = MovingAverageFilter(int(args.sample_rate / 50))
+        self.is_recording   = False
+        self.is_collecting  = False
+        self.daq_running    = 0
+        self.f              = None
+        self.ppg_buf        = np.zeros(self.args.sample_rate*PLOT_SECONDS)
+        self.beg_Hz         = 0.8
+        self.end_Hz         = 4
+        self.incremental_hz = 1 / PLOT_SECONDS
+        self.beg_idx        = int(self.beg_Hz // self.incremental_hz)
+        self.end_idx        = int(self.end_Hz // self.incremental_hz)
+        self.fft_size       = self.args.sample_rate*PLOT_SECONDS
 
         self.layout = self.create_views()
 
@@ -48,7 +52,7 @@ class DataCollectionWindow(QMainWindow):
         self.setWindowTitle(TITLE % (subject.name, subject.no))
         self.setMinimumWidth(600)
         self.setMinimumHeight(800)
-        self.resize(1920, 960)
+        self.resize(480, 240)
 
     def create_views(self):
         # Layout
@@ -82,31 +86,32 @@ class DataCollectionWindow(QMainWindow):
         layout.addItem(actions_layout)
 
         # Live line charts
-        charts_layout = QVBoxLayout()
-        charts_layout.setSpacing(8)
-        max_points = self.args.sample_rate * PLOT_SECONDS
-        update_rate = 50
-        # BCG
+        charts_layout = QGridLayout()
+        max_points    = self.args.sample_rate * PLOT_SECONDS
+        self.update_rate   = 50
+        # heart rate label
+        heartbeat_label = QLabel('Heart rate: ')
+        heartbeat_label.setFont((QFont('Arial', 16)))
+        heartbeat_label.setStyleSheet('color: red')
+        self.heartbeat_value = QLabel('')
+        self.heartbeat_value.setFont((QFont('Arial', 16)))
+        self.heartbeat_value.setStyleSheet('color: red')
+        charts_layout.addWidget(heartbeat_label, 0, 0, 1, 1, alignment=Qt.AlignHCenter)
+        charts_layout.addWidget(self.heartbeat_value, 0, 1, 1, 1, alignment=Qt.AlignHCenter)
+        # ppg time-domain data
         plot_widget = LivePlotWidget(title="")
-        self.style_plot_widget(plot_widget, title="BCG")
-        self.bcg_curve = LiveLinePlot(pen={'color': "k", 'width': 3})
-        plot_widget.addItem(self.bcg_curve)
-        charts_layout.addWidget(plot_widget)
-        self.bcg_connector = DataConnector(self.bcg_curve, max_points=max_points, update_rate=update_rate)
-        # ECG
+        self.style_plot_widget(plot_widget, title="PPG (Time domain)")
+        self.ppg_curve_time = LiveLinePlot(pen={'color': "k", 'width': 3})
+        plot_widget.addItem(self.ppg_curve_time)
+        charts_layout.addWidget(plot_widget, 1, 0, 1, 4)
+        self.ppg_connector_time = DataConnector(self.ppg_curve_time, max_points=max_points, update_rate=self.update_rate)
+        # ppg freq-domain data
         plot_widget = LivePlotWidget(title="")
-        self.style_plot_widget(plot_widget, title="ECG")
-        self.ecg_curve = LiveLinePlot(pen={'color': "k", 'width': 3})
-        plot_widget.addItem(self.ecg_curve)
-        charts_layout.addWidget(plot_widget)
-        self.ecg_connector = DataConnector(self.ecg_curve, max_points=max_points, update_rate=update_rate)
-        # PPG
-        plot_widget = LivePlotWidget(title="")
-        self.style_plot_widget(plot_widget, title="PPG")
-        self.ppg_curve = LiveLinePlot(pen={'color': "k", 'width': 3})
-        plot_widget.addItem(self.ppg_curve)
-        charts_layout.addWidget(plot_widget)
-        self.ppg_connector = DataConnector(self.ppg_curve, max_points=max_points, update_rate=update_rate)
+        self.style_plot_widget(plot_widget, title="PPG (Frequency domain)")
+        self.ppg_curve_freq = LiveLinePlot(pen={'color': "k", 'width': 3})
+        plot_widget.addItem(self.ppg_curve_freq)
+        charts_layout.addWidget(plot_widget, 2, 0, 1, 4)
+        self.ppg_connector_freq = DataConnector(self.ppg_curve_freq, max_points=self.end_idx-self.beg_idx, update_rate=self.update_rate)
 
         layout.addItem(charts_layout)
 
@@ -126,31 +131,34 @@ class DataCollectionWindow(QMainWindow):
     def click_start_stop(self):
         self.btn_control.setEnabled(False)
 
-        if self.is_collecting:
+        if self.is_recording:
             self.btn_control.setText("Start")
-            Thread(target=self.stop_collecting).start()
+            Thread(target=self.stop_recording).start()
         else:
             self.btn_control.setText("Stop")
-            Thread(target=self.start_collecting).start()
+            Thread(target=self.start_recording).start()
 
-    def start_collecting(self):
-        self.bcg_filter.reset()
-        self.ecg_filter.reset()
-
+    def start_recording(self):
         exp = self.cb_exp.currentText()
-        filename = fullfile(self.args.data_dir, '%s/%s/%s.dat' % (self.subject.no, exp, datetime.now().strftime("%m-%d-%Y-%H-%M-%S")))
-        self.f = self.open_data_file(filename)
+        if not exp == EXPERIMENTS[0]:
+            self.is_collecting = True
+        
+        if self.is_collecting:
+            filename = fullfile(self.args.data_dir, '%s/%s/%s.dat' % (self.subject.no, exp, datetime.now().strftime("%m-%d-%Y-%H-%M-%S")))
+            self.f = self.open_data_file(filename)
         Thread(target=self.open_daqmx).start()
         while self.daq_running == 0:
             time.sleep(0.1)
         self.cb_exp.setEnabled(False)
         self.btn_control.setEnabled(True)
 
-    def stop_collecting(self):
-        self.is_collecting = False
+    def stop_recording(self):
+        self.is_recording = False
         while self.daq_running == 1:
             time.sleep(0.1)
-        self.f.close()
+        if self.is_collecting:
+            self.is_collecting = False
+            self.f.close()
         self.cb_exp.setEnabled(True)
         self.btn_control.setEnabled(True)
 
@@ -164,28 +172,40 @@ class DataCollectionWindow(QMainWindow):
 
         return open(filename, 'wb')
 
+    def update_fft(self, data):
+        data = np.array(data)
+        self.ppg_buf = np.concatenate((self.ppg_buf[data.shape[0]:], data), axis=None)
+        self.ppg_spectrum_abs  = np.abs(np.fft.rfft(self.ppg_buf, self.fft_size))
+        # Pick the Peaks in the Heart Spectrum [1.6 - 4.0 Hz]
+        max_heart_spectrum_idx = np.argmax(self.ppg_spectrum_abs[self.beg_idx: self.end_idx])
+        self.heart_rate        = (max_heart_spectrum_idx + self.beg_idx) * self.incremental_hz * CONVERT_TO_BPM
+        
+
     def open_daqmx(self):
         with nidaqmx.Task() as task:
-            for ch in self.args.channels:
+            # for ch in self.args.channels:
                 # task.ai_channels.add_ai_voltage_chan("%s/ai%d" % (nidaqmx.system.System.local().devices[0].name, ch)) #  , terminal_config=TerminalConfiguration.NRSE
-                task.ai_channels.add_ai_voltage_chan("%s/ai%d" % (nidaqmx.system.System.local().devices[0].name, ch) , terminal_config=TerminalConfiguration.NRSE) # 
+                # task.ai_channels.add_ai_voltage_chan("%s/ai%d" % (nidaqmx.system.System.local().devices[0].name, ch) , terminal_config=TerminalConfiguration.NRSE) # 
+            task.ai_channels.add_ai_voltage_chan("%s/ai%d" % (nidaqmx.system.System.local().devices[0].name, self.args.channels) , terminal_config=TerminalConfiguration.NRSE) # 
 
             task.timing.cfg_samp_clk_timing(self.args.sample_rate, sample_mode=AcquisitionType.CONTINUOUS)
 
-            # with open(self.args.out, 'wb') as f:
             self.daq_running = 1
-            self.bcg_connector.clear()
-            self.ecg_connector.clear()
-            self.ppg_connector.clear()
-            counter = 0
-            self.is_collecting = True
-            while self.is_collecting:
-                num_per_channel = self.args.sample_rate // 50
-                data = task.read(number_of_samples_per_channel=num_per_channel)
-                self.bcg_connector.cb_append_data_array(self.bcg_filter.filter(data[0]), [counter + i for i in range(num_per_channel)])
-                self.ecg_connector.cb_append_data_array(self.ecg_filter.filter(data[1]), [counter + i for i in range(num_per_channel)])
-                self.ppg_connector.cb_append_data_array(data[2], [counter + i for i in range(num_per_channel)])
-                counter += num_per_channel
-                array('d', [data[ch][i] for i in range(num_per_channel) for ch in range(len(data))]).tofile(self.f)
-            self.daq_running = 0
+            self.ppg_connector_time.clear()
+            self.ppg_connector_freq.clear()
 
+            counter = 0
+            self.is_recording = True
+            while self.is_recording:
+                num_per_channel = self.args.sample_rate // self.update_rate
+                data = task.read(number_of_samples_per_channel=num_per_channel)
+                self.update_fft(data)
+
+                self.ppg_connector_time.cb_append_data_array(data, [counter + i for i in range(num_per_channel)])
+                self.ppg_connector_freq.cb_append_data_array(self.ppg_spectrum_abs[self.beg_idx: self.end_idx], [i for i in range(self.beg_idx, self.end_idx)])
+                self.heartbeat_value.setText(str(round(self.heart_rate, 2)))
+
+                counter += num_per_channel
+                if self.is_collecting:
+                    array('d', [data]).tofile(self.f)
+            self.daq_running = 0
