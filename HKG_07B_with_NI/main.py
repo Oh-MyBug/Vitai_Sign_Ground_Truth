@@ -22,7 +22,6 @@ args = parser.parse_args()
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
-
 confirm = False
 
 def main():
