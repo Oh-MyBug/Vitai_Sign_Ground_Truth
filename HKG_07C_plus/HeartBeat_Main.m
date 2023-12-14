@@ -32,9 +32,10 @@ CMD = struct("START", 0x2032, "STOP", 0x2033);
 
 % 处理变量
 SAMPLE_RATE         = 200;
-PLOT_SEC            = 15;
+CONVERT_HZ_BPM      = 60;
+PLOT_SEC            = 20;
 PLOT_SIZE           = PLOT_SEC * SAMPLE_RATE;
-FFT_SIZE            = 1024;
+FFT_SIZE            = 1024*5;
 FREQ_INCREMENT_HZ   = SAMPLE_RATE / FFT_SIZE;
 BREATH_FFT_BEG_HZ   = 0.1;                                                  % 呼吸FFT起始频率
 BREATH_FFT_END_HZ   = 0.6;                                                  % 呼吸FFT结束频率
@@ -54,6 +55,7 @@ configureTerminator(hkg_port, "CR");
 write(hkg_port, CMD.START, "uint8");
 
 % 画图
+plot_num = 1;
 plot_num_row = 1;
 plot_num_col = 2;
 fig = figure('color', 'w', 'position', [150, 550, 400, 200]);
@@ -78,11 +80,19 @@ while isempty(get(gcf,'CurrentCharacter'))
     hkg     = [hkg(2:end); data];
     hkg_fft = abs(fft(hkg, FFT_SIZE));
     
+    [~, i]      = max(hkg_fft(HEART_FFT_BEG_IDX: HEART_FFT_END_IDX));
+    heart_rate  = (i + HEART_FFT_BEG_IDX - 2) * CONVERT_HZ_BPM * FREQ_INCREMENT_HZ;
+    
+    plot_num = plot_num + 1;
+    if mod(plot_num, 5)
+        continue;
+    end
     % 更新图
     line_hkg.XData          = linspace(0, PLOT_SEC, PLOT_SIZE);
     line_hkg.YData          = hkg;
     line_hkg_fft.XData      = (HEART_FFT_BEG_IDX-1:HEART_FFT_END_IDX-1) * FREQ_INCREMENT_HZ;
     line_hkg_fft.YData      = hkg_fft(HEART_FFT_BEG_IDX:HEART_FFT_END_IDX);
+    title(ax(2), sprintf("Heart Rate: %.2fBPM", heart_rate))
     
     drawnow limitrate;
 end

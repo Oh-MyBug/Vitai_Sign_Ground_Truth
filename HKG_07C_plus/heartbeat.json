@@ -2,7 +2,7 @@
     "store_file": {
         "enabled": 1,
         "root_path": "./data",
-        "name": "sample_1.mat"
+        "name": "sample_5.mat"
     },
     "serial": {
         "port": "COM16",
