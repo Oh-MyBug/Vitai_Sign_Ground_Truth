@@ -1,0 +1,49 @@
+clear, clc, close all;
+
+% 启动测量：
+% 上位机 →→ 传感器：0xFF 0xCC 0x03 CKSUM 0xA0
+% 上位机 ←← 传感器(应答)：0xFF 0xCC 0x05 CKSUM 0xA0 MBH MBL
+% 说明：
+% MBH、MBL 分别表示呼吸波数据高低字节(波动幅值，相对量)。
+
+% 停止采样：
+% 上位机 →→ 传感器：0xFF 0xCC 0x03 CKSUM 0xA1
+% 上位机 ←← 传感器(应答)：0xFF 0xCC 0x03 CKSUM 0xA1
+global HEADER_WORDS DEVICE_TYPE FRAME_LEN CMD
+PORT         = "COM2";                              % 串口号
+BAUDRATE     = 115200;                              % 波特率
+SAMPLE_RATE  = 50;
+HEADER_WORDS = 0xFF;                                % 帧头标识：固定为数据帧起始位
+DEVICE_TYPE  = 0xCC;                                % 设备类别：呼吸：HKH-11C
+FRAME_LEN    = 0x03;                                % 长度：包含长度、校验、命令、参数的字节数
+
+CKSUM        = struct("START", 0xA3, "END", 0xA4);  % 校验：长度、命令、参数求和
+CMD          = struct("START", 0xA0, "END", 0xA1);  % 启动0xA0 停止0xA1
+
+% 处理变量
+FFT_SIZE = 102
+ppg_buffer = zeros()
+
+% 连接串口
+data_port = serialport(PORT, BAUDRATE);
+configureTerminator(data_port, "CR");
+% 启动测量
+write(data_port, [HEADER_WORDS DEVICE_TYPE FRAME_LEN CKSUM.START CMD.START], "uint8");
+
+% 画图
+
+plot_num_row = 1;
+plot_num_col = 2;
+figure('color', 'w');
+for p_i = 1: plot_num_row*plot_num_col
+    ax(p_i) = subplot(plot_num_row, plot_num_col, 1);
+end
+line_ppg     = plot(ax(1), 0, 0, '-k', 'linewidth', 1.5);
+line_ppg_fft = plot(ax(1), 0, 0, '-k', 'linewidth', 1.5);
+while 1
+    fprintf('NumBytesAvailable: %d\n', data_port.NumBytesAvailable);
+    [data, ret] = uart_stream(data_port);
+    if ret
+        
+    end
+end

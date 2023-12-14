@@ -20,8 +20,9 @@ from widgets.form_label import FormLabel
 
 
 TITLE = "Data Collection (%s - %s)"
-PLOT_SECONDS = 20
+PLOT_SECONDS   = 10
 CONVERT_TO_BPM = 60
+FFT_SIZE       = 40*1000
 EXPERIMENTS = ['Heartbeat_Visualization', 'PPG_Collection']
 
 class DataCollectionWindow(QMainWindow):
@@ -35,13 +36,13 @@ class DataCollectionWindow(QMainWindow):
         self.is_collecting  = False
         self.daq_running    = 0
         self.f              = None
-        self.ppg_buf        = np.zeros(self.args.sample_rate*PLOT_SECONDS)
+        self.ppg_buf        = np.zeros(FFT_SIZE)
         self.beg_Hz         = 0.8
         self.end_Hz         = 4
-        self.incremental_hz = 1 / PLOT_SECONDS
+        self.fft_size       = FFT_SIZE
+        self.incremental_hz = self.args.sample_rate / self.fft_size
         self.beg_idx        = int(self.beg_Hz // self.incremental_hz)
         self.end_idx        = int(self.end_Hz // self.incremental_hz)
-        self.fft_size       = self.args.sample_rate*PLOT_SECONDS
 
         self.layout = self.create_views()
 
@@ -175,7 +176,7 @@ class DataCollectionWindow(QMainWindow):
     def update_fft(self, data):
         data = np.array(data)
         self.ppg_buf = np.concatenate((self.ppg_buf[data.shape[0]:], data), axis=None)
-        self.ppg_spectrum_abs  = np.abs(np.fft.rfft(self.ppg_buf, self.fft_size))
+        self.ppg_spectrum_abs  = np.abs(np.fft.fft(self.ppg_buf, self.fft_size))
         # Pick the Peaks in the Heart Spectrum [1.6 - 4.0 Hz]
         max_heart_spectrum_idx = np.argmax(self.ppg_spectrum_abs[self.beg_idx: self.end_idx])
         self.heart_rate        = (max_heart_spectrum_idx + self.beg_idx) * self.incremental_hz * CONVERT_TO_BPM
@@ -209,3 +210,4 @@ class DataCollectionWindow(QMainWindow):
                 if self.is_collecting:
                     array('d', [data]).tofile(self.f)
             self.daq_running = 0
+            

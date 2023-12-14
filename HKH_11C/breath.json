@@ -1,0 +1,11 @@
+{
+    "store_file": {
+        "enabled": 1,
+        "root_path": "./data",
+        "name": "sample_1.mat"
+    },
+    "serial": {
+        "port": "COM2",
+        "baudrate": 115200
+    }
+}
